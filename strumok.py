@@ -2,7 +2,7 @@ from strumok_tables import *
 import time
 
 class Strumok:
-    MASK_64 = 0xFFFFFFFFFFFFFFFF
+    MASK_64 = 0xffffffffffffffff
 
     def __init__(self):
         # LFSR state: 16 registers (s0 to s15) 
@@ -22,25 +22,25 @@ class Strumok:
 # non linear transformation using strumok_tables
     def substitute_T(self, v):
         return (
-            strumok_T0[v & 0xFF] ^
-            strumok_T1[(v >> 8) & 0xFF] ^
-            strumok_T2[(v >> 16) & 0xFF] ^
-            strumok_T3[(v >> 24) & 0xFF] ^
-            strumok_T4[(v >> 32) & 0xFF] ^
-            strumok_T5[(v >> 40) & 0xFF] ^
-            strumok_T6[(v >> 48) & 0xFF] ^
-            strumok_T7[(v >> 56) & 0xFF]
+            strumok_T0[v & 0xff] ^
+            strumok_T1[(v >> 8) & 0xff] ^
+            strumok_T2[(v >> 16) & 0xff] ^
+            strumok_T3[(v >> 24) & 0xff] ^
+            strumok_T4[(v >> 32) & 0xff] ^
+            strumok_T5[(v >> 40) & 0xff] ^
+            strumok_T6[(v >> 48) & 0xff] ^
+            strumok_T7[(v >> 56) & 0xff]
         )
 
 # multiplication by alpha table
     def multiply_alpha(self, v):
-        top_byte = (v >> 56) & 0xFF
+        top_byte = (v >> 56) & 0xff
         shifted = (v << 8) & self.MASK_64
         return shifted ^ strumok_alpha_mul[top_byte]
 
 # multiplication by alpha inverse table
     def multiply_alpha_inv(self, v):
-        bottom_byte = v & 0xFF
+        bottom_byte = v & 0xff
         shifted = (v >> 8) & self.MASK_64
         return shifted ^ strumok_alphainv_mul[bottom_byte]
 
@@ -219,7 +219,7 @@ def verify_and_benchmark():
         }
     ]
 
-    print(f"{'Algorithm':<25} | {'Status':<10} | {'Max Speed (Mbps)':<15}")
+    print(f"{'Algorithm'} | {'Status'} | {'Max Speed (Mbps)'}")
     print("-" * 60)
 
     for case in tests:
@@ -237,7 +237,7 @@ def verify_and_benchmark():
         duration = time.perf_counter() - start
         mbps = (sample_size * 64 / 1e6) / duration
         
-        print(f"{case['name']:<25} | {status:<10} | {mbps:>16.2f}")
+        print(f"{case['name']} | {status} | {mbps:.2f}")
 
 if __name__ == "__main__":
     verify_and_benchmark()
