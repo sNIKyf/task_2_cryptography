@@ -1,5 +1,5 @@
 from strumok import Strumok
-
+from strumok_tables import *
 # Зберігаємо всі значення S, R1, R2 та виходи Z для перших 11 кроків.
 # Вони потрібні лише для перевірки й для отримання деяких векторів для атаки.
 def get_trajectory(key_words, iv_words, num_steps=11):
@@ -57,6 +57,20 @@ for name, val in known.items():
     print(f"  {name:} = {hex(val):}")
 
 
+MASK = 0xffffffffffffffff
+
+def substitute_T(v):
+    return (
+        strumok_T0[v & 0xff] ^
+        strumok_T1[(v >> 8) & 0xff] ^
+        strumok_T2[(v >> 16) & 0xff] ^
+        strumok_T3[(v >> 24) & 0xff] ^
+        strumok_T4[(v >> 32) & 0xff] ^
+        strumok_T5[(v >> 40) & 0xff] ^
+        strumok_T6[(v >> 48) & 0xff] ^
+        strumok_T7[(v >> 56) & 0xff]
+    )
+
 def simulate_attack(initial_state):
     state = dict(initial_state)
     changed = True
@@ -64,28 +78,87 @@ def simulate_attack(initial_state):
     def put(name, value):
         nonlocal changed
         if name not in state:
-            state[name] = value
+            state[name] = value & MASK
             changed = True
 
     while changed:
         changed = False
-        # 1. Зв'язки R2 -> R1
-        if "R2_3" in state: put("R1_2", R1[2])
-        if "R2_8" in state: put("R1_7", R1[7])
-        if "R2_10" in state: put("R1_9", R1[9])
-        # 2. Зв'язки R1, S -> R2, S
-        if "R1_7" in state and "S19" in state: put("R2_6", R2[6])
-        if "R1_9" in state and "R2_8" in state: put("S21", S[21])
-        if "R2_6" in state: put("R1_5", R1[5])
-        # 3. Рівняння виходу
-        if all(x in state for x in ["Z_6", "S21", "R2_6", "S6"]): put("R1_6", R1[6])
-        if "R1_6" in state: put("R2_7", R2[7])
-        if all(x in state for x in ["Z_7", "R1_7", "R2_7", "S7"]): put("S22", S[22])
-        # 4. Рекурента LFSR
-        if all(x in state for x in ["S22", "S6", "S19"]): put("S17", S[17])
-        if all(x in state for x in ["R1_5", "S17"]): put("R2_4", R2[4])
-        if "R2_4" in state: put("R1_3", R1[3])
-        if all(x in state for x in ["Z_3", "R1_3", "R2_3", "S3"]): put("S18", S[18])
+        # R2_{t+1} = T(R1_t)  →  звідси НЕ можна отримати R1_t без T^{-1}.
+        # Тому ці кроки пропускаємо, вони виконані "вгадуванням" R2_3, R2_8, R2_10.
+        # Натомість використовуємо R1_{t+1} = S_{t+13} + R2_t:
+        # R1_7 = S_19 + R2_6  →  але R2_6 ще невідома; пізніше
+        # R2_6 = R1_7 - S_19  →  якщо R1_7 відома... теж поки ні.
+        # Єдиний вихід — через рівняння виходу:
+        # Z_6 = ((S_21 + R1_6) ^ R2_6) ^ S_6
+        # Кроки де T^{-1} потрібна (State 0 в Autoguess)
+        # R2_3 = T(R1_2)  →  R1_2 = T^{-1}(R2_3)
+        # Для демонстрації: перевіряємо і використовуємо реальне R1_2, але явно верифікуємо через T
+        if "R2_3" in state and "R1_2" not in state:
+            # В реальній атаці: розв'язок системи 64x64 лін. рівнянь над GF(2)
+            # Для демонстрації: підбираємо R1_2 і перевіряємо T(R1_2) == R2_3
+            r1_2_candidate = R1[2]  # уявляємо що отримано через T^{-1}
+            assert substitute_T(r1_2_candidate) == state["R2_3"]
+            put("R1_2", r1_2_candidate)
+
+        if "R2_8" in state and "R1_7" not in state:
+            r1_7_candidate = R1[7]
+            assert substitute_T(r1_7_candidate) == state["R2_8"]
+            put("R1_7", r1_7_candidate)
+
+        if "R2_10" in state and "R1_9" not in state:
+            r1_9_candidate = R1[9]
+            assert substitute_T(r1_9_candidate) == state["R2_10"]
+            put("R1_9", r1_9_candidate)
+
+        # R1_{t+1} = S_{t+13} + R2_t  →  R2_6 = R1_7 - S_19
+        if "R1_7" in state and "S19" in state:
+            put("R2_6", (state["R1_7"] - state["S19"]) & MASK)
+
+        # R1_9 = S_21 + R2_8  →  S_21 = R1_9 - R2_8
+        if "R1_9" in state and "R2_8" in state:
+            put("S21", (state["R1_9"] - state["R2_8"]) & MASK)
+
+        # R2_6 = T(R1_5)  →  R1_5 через T^{-1} (аналогічно)
+        if "R2_6" in state and "R1_5" not in state:
+            r1_5_candidate = R1[5]
+            assert substitute_T(r1_5_candidate) == state["R2_6"]
+            put("R1_5", r1_5_candidate)
+
+        # Z_6 = ((S_21 + R1_6) ^ R2_6) ^ S_6  →  R1_6
+        if all(x in state for x in ["Z_6", "S21", "R2_6", "S6"]):
+            inner = (state["Z_6"] ^ state["S6"]) ^ state["R2_6"]
+            put("R1_6", (inner - state["S21"]) & MASK)
+
+        # R2_7 = T(R1_6)  →  пряме обчислення!
+        if "R1_6" in state:
+            put("R2_7", substitute_T(state["R1_6"]))
+
+        # Z_7 = ((S_22 + R1_7) ^ R2_7) ^ S_7  →  S_22
+        if all(x in state for x in ["Z_7", "R1_7", "R2_7", "S7"]):
+            inner = (state["Z_7"] ^ state["S7"]) ^ state["R2_7"]
+            put("S22", (inner - state["R1_7"]) & MASK)
+
+        # S_22 = alpha*S_6 ^ alpha^{-1}*S_17 ^ S_19  →  S_17
+        if all(x in state for x in ["S22", "S6", "S19"]):
+            cipher = Strumok()
+            rhs = state["S22"] ^ cipher.multiply_alpha(state["S6"]) ^ state["S19"]
+            put("S17", cipher.multiply_alpha(rhs))
+
+        # R1_5 = S_17 + R2_4  →  R2_4
+        if "R1_5" in state and "S17" in state:
+            put("R2_4", (state["R1_5"] - state["S17"]) & MASK)
+
+        # R2_4 = T(R1_3)  →  T^{-1}
+        if "R2_4" in state and "R1_3" not in state:
+            r1_3_candidate = R1[3]
+            assert substitute_T(r1_3_candidate) == state["R2_4"], "T(R1_3) ≠ R2_4!"
+            put("R1_3", r1_3_candidate)
+
+        # Z_3 = ((S_18 + R1_3) ^ R2_3) ^ S_3  →  S_18
+        if all(x in state for x in ["Z_3", "R1_3", "R2_3", "S3"]):
+            inner = (state["Z_3"] ^ state["S3"]) ^ state["R2_3"]
+            put("S18", (inner - state["R1_3"]) & MASK)
+
     return state
 
 recovered = simulate_attack(known)
